@@ -298,6 +298,56 @@ func SaveTools(name string, c *ToolCache) error {
 	return os.WriteFile(p, b, 0o600)
 }
 
+func sessionPath(name string) (string, error) {
+	d, err := Dir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "session.json"), nil
+}
+
+// LoadSession reads the saved MCP session (raw JSON, decoded by the caller);
+// missing yields nil, nil.
+func LoadSession(name string) (json.RawMessage, error) {
+	p, err := sessionPath(name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return b, nil
+}
+
+// SaveSession writes the MCP session state.
+func SaveSession(name string, v any) error {
+	p, err := sessionPath(name)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o600)
+}
+
+// DeleteSession removes the saved session if present.
+func DeleteSession(name string) error {
+	p, err := sessionPath(name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // ParseHeader splits "Name: value" or "Name=value".
 func ParseHeader(s string) (string, string, error) {
 	for _, sep := range []string{":", "="} {

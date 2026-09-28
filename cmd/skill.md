@@ -48,8 +48,11 @@ bearer token or none). Markdown on stdout, hints/errors on stderr.
 - Scripts: `--json | jq`, `--format csv`, exit codes are meaningful.
 
 ## Gotchas
-- Every invocation opens a fresh MCP session (initialize + request); that is
-  two HTTP round trips, fine for interactive use, not for tight loops.
+- The first call to a server does the MCP handshake (initialize, initialized,
+  request: 3 HTTP round trips); the session id is saved in
+  `~/.mcpcli/<profile>/session.json` and later calls cost one round trip.
+  When the server forgets the session (404), the handshake runs again
+  transparently. Stateless servers are called directly.
 - Servers that need the standalone SSE stream for notifications are not
   supported; request/response only.
 - Tool lists are cached per profile; if a server adds tools, `tools --refresh`.

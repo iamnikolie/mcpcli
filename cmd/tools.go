@@ -254,20 +254,21 @@ var callCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_, session, err := connect(ctx, profile)
-		if err != nil {
-			return err
-		}
-		defer session.Close()
 		start := time.Now()
-		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: params})
+		raw, err := quickCall(ctx, profile, "tools/call", &mcp.CallToolParams{Name: tool, Arguments: params}, func(s *mcp.ClientSession) (any, error) {
+			return s.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: params})
+		})
 		if err != nil {
 			return fmt.Errorf("%s: %w", tool, err)
+		}
+		var res mcp.CallToolResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			return fmt.Errorf("%s: decode result: %w", tool, err)
 		}
 		if verbose {
 			fmt.Fprintf(stderr, "(%s in %s)\n", tool, time.Since(start).Round(time.Millisecond))
 		}
-		return renderResult(res)
+		return renderResult(&res)
 	},
 }
 

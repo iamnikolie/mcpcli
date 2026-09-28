@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -421,4 +422,143 @@ func TestBadFormat(t *testing.T) {
 	if _, _, err := run(t, "--format", "xml", "profiles"); err == nil {
 		t.Fatal("bad format must error")
 	}
+}
+
+// counting wraps a handler and counts POSTs; swap lets a test "restart" the
+// server so old session ids become unknown.
+type counting struct {
+	mu    sync.Mutex
+	n     int
+	inner http.Handler
+}
+
+func (c *counting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	c.n++
+	h := c.inner
+	c.mu.Unlock()
+	h.ServeHTTP(w, r)
+}
+
+func (c *counting) posts() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+func (c *counting) swap(h http.Handler) {
+	c.mu.Lock()
+	c.inner = h
+	c.mu.Unlock()
+}
+
+func stateful() http.Handler {
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newMCP() }, nil)
+}
+
+func TestSessionReuseStateful(t *testing.T) {
+	h := home(t)
+	c := &counting{inner: stateful()}
+	srv := httptest.NewServer(c)
+	defer srv.Close()
+	run(t, "add", "s", srv.URL, "--no-auth")
+
+	// First call: tools/list handshake (3) + call handshake (3) since nothing is cached yet.
+	if out, _, err := run(t, "s", "add", "a=1", "b=2"); err != nil || !strings.Contains(out, "sum: 3") {
+		t.Fatalf("first: %v %q", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(h, "s", "session.json")); err != nil {
+		t.Fatal("session.json not written")
+	}
+	sess := loadSession("s")
+	if sess == nil || sess.ID == "" || sess.Protocol == "" || sess.Direct {
+		t.Fatalf("stateful session not captured: %+v", sess)
+	}
+	before := c.posts()
+	if out, _, err := run(t, "s", "add", "a=2", "b=2"); err != nil || !strings.Contains(out, "sum: 4") {
+		t.Fatalf("second: %v %q", err, out)
+	}
+	if got := c.posts() - before; got != 1 {
+		t.Fatalf("reused session should cost exactly 1 request, got %d", got)
+	}
+
+	// Server "restarts": the session id is unknown → 404 → full handshake → success.
+	c.swap(stateful())
+	before = c.posts()
+	if out, _, err := run(t, "s", "add", "a=3", "b=3"); err != nil || !strings.Contains(out, "sum: 6") {
+		t.Fatalf("after restart: %v %q", err, out)
+	}
+	if got := c.posts() - before; got != 4 {
+		t.Fatalf("expired session: 1 failed + 3 handshake+call expected, got %d", got)
+	}
+	if s2 := loadSession("s"); s2 == nil || s2.ID == sess.ID {
+		t.Fatalf("new session id should be saved: %+v", s2)
+	}
+	before = c.posts()
+	run(t, "s", "add", "a=1", "b=1")
+	if got := c.posts() - before; got != 1 {
+		t.Fatalf("new session should be reused, got %d", got)
+	}
+	// Tool-level errors on the fast path are not treated as session loss.
+	before = c.posts()
+	if _, errs, err := run(t, "s", "fail"); err == nil || !strings.Contains(errs, "tool error: boom") {
+		t.Fatalf("fail via fast path: %v %q", err, errs)
+	}
+	if got := c.posts() - before; got != 1 {
+		t.Fatalf("tool error must not trigger a handshake, got %d", got)
+	}
+	run(t, "logout", "s")
+	if loadSession("s") != nil {
+		t.Fatal("logout must drop the session")
+	}
+}
+
+func TestSessionReuseStateless(t *testing.T) {
+	home(t)
+	c := &counting{inner: handler(newMCP())}
+	srv := httptest.NewServer(c)
+	defer srv.Close()
+	run(t, "add", "s", srv.URL, "--no-auth")
+	run(t, "s", "tools")
+	if out, _, err := run(t, "s", "add", "a=1", "b=2"); err != nil || !strings.Contains(out, "sum: 3") {
+		t.Fatalf("first: %v %q", err, out)
+	}
+	sess := loadSession("s")
+	if sess == nil || sess.ID != "" || !sess.Direct {
+		t.Fatalf("stateless session should be direct: %+v", sess)
+	}
+	before := c.posts()
+	if out, _, err := run(t, "s", "add", "a=2", "b=2"); err != nil || !strings.Contains(out, "sum: 4") {
+		t.Fatalf("direct: %v %q", err, out)
+	}
+	if got := c.posts() - before; got != 1 {
+		t.Fatalf("stateless direct call should cost 1 request, got %d", got)
+	}
+
+	// The server becomes stateful and rejects unsessioned requests: the
+	// direct call fails, a handshake follows, and the new session is saved.
+	st := stateful()
+	c.swap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Mcp-Session-Id") == "" && !strings.Contains(readBody(r), `"initialize"`) {
+			http.Error(w, "Bad Request: Server not initialized", http.StatusBadRequest)
+			return
+		}
+		st.ServeHTTP(w, r)
+	}))
+	before = c.posts()
+	if out, _, err := run(t, "s", "add", "a=3", "b=3"); err != nil || !strings.Contains(out, "sum: 6") {
+		t.Fatalf("fallback: %v %q", err, out)
+	}
+	if got := c.posts() - before; got != 4 {
+		t.Fatalf("rejected direct + handshake expected 4, got %d", got)
+	}
+	if s2 := loadSession("s"); s2 == nil || s2.ID == "" {
+		t.Fatalf("stateful session should now be saved: %+v", s2)
+	}
+}
+
+func readBody(r *http.Request) string {
+	b, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(b))
+	return string(b)
 }

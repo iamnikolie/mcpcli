@@ -154,8 +154,10 @@ mcpcli skill wispr-work -o ~/.claude/skills/wispr-work/SKILL.md
 - Streamable HTTP only, request/response. The standalone SSE stream for
   server-initiated notifications is not opened. Legacy HTTP+SSE servers and
   stdio servers are out of scope (use your client's config for those).
-- Each invocation is a fresh session: initialize, request, close. Two HTTP
-  round trips per call.
+- The first call does the MCP handshake (three HTTP round trips); the session
+  id is kept in `~/.mcpcli/<profile>/session.json` and reused, so later calls
+  are a single request. An expired session (404) triggers a new handshake
+  automatically. Stateless servers are called directly.
 - OAuth requires the server to publish protected-resource metadata. Servers
   that only take a static token use `--bearer` / `--bearer-env`.
 

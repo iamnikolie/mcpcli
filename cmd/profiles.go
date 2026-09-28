@@ -214,6 +214,7 @@ var logoutCmd = &cobra.Command{
 		if err := config.DeleteToken(args[0]); err != nil {
 			return err
 		}
+		_ = config.DeleteSession(args[0])
 		fmt.Fprintf(stdout, "Logged out %s\n", args[0])
 		return nil
 	},
