@@ -1,0 +1,31 @@
+name: Bug report
+description: Something the CLI does wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `mcpcli version` and `mcpcli profiles`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: >
+        Anything else that helps reproduce it — never tokens or tool output containing private data.
+        Redact paths and anything sensitive — this is a public
+        issue tracker.
+      render: text
+    validations:
+      required: false
