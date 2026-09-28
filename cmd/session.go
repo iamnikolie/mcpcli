@@ -50,6 +50,10 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 var errUnauthorized = errors.New("server rejected the credentials (HTTP 401)")
 
+// protocolVersion is the MCP revision mcpcli speaks; servers negotiate down
+// from it if they are older.
+const protocolVersion = "2025-11-25"
+
 func baseHTTP() *http.Client {
 	return &http.Client{Timeout: timeout}
 }
@@ -126,7 +130,10 @@ func connect(ctx context.Context, name string) (*config.Profile, *mcp.ClientSess
 	}
 	transport := &mcp.StreamableClientTransport{Endpoint: p.URL, HTTPClient: hc, DisableStandaloneSSE: true, MaxRetries: 1}
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcpcli", Version: version}, nil)
-	session, err := client.Connect(ctx, transport, nil)
+	// Pin the protocol version: newer SDKs first probe with a stateless
+	// server/discover request that most servers reject with a 400 before the
+	// real initialize, which is a wasted round trip on every invocation.
+	session, err := client.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: protocolVersion})
 	if err != nil {
 		if errors.Is(err, errUnauthorized) {
 			if p.Auth == config.AuthOAuth {
