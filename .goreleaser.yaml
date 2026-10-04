@@ -46,3 +46,25 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+# Formula in iamnikolie/homebrew-tap, rewritten on every tag. Needs the
+# HOMEBREW_TAP_TOKEN secret (fine-grained, contents:write on homebrew-tap only).
+brews:
+  - name: mcpcli
+    repository:
+      owner: iamnikolie
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    commit_author:
+      name: Mykola Klitovchenko
+      email: mykola.klitovchenko@gmail.com
+    commit_msg_template: "{{ .ProjectName }} {{ .Version }}"
+    homepage: https://github.com/iamnikolie/mcpcli
+    description: "Any remote MCP server as a CLI, with OAuth profiles per account"
+    license: MIT
+    skip_upload: auto
+    install: |
+      bin.install "mcpcli"
+    test: |
+      assert_match(/^mcpcli version /, shell_output("#{bin}/mcpcli version"))
